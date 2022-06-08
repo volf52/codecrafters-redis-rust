@@ -1,5 +1,7 @@
-// mod redis_protocol;
+mod redis_protocol;
+// mod types;
 
+use crate::redis_protocol::process_command;
 #[allow(unused_imports)]
 use std::env;
 #[allow(unused_imports)]
@@ -41,9 +43,9 @@ async fn handle_socket(mut socket: TcpStream, addr: SocketAddr) {
             Ok(n) => {
                 let s = str::from_utf8(&buffer[..n]).expect("couldn't convert as utf8");
 
-                println!("Received {}", s);
+                let ans = process_command(s).as_bytes();
 
-                let _ = socket.write(t).await;
+                let _ = socket.write(ans).await;
             }
         }
     }
