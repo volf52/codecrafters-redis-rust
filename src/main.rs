@@ -1,17 +1,52 @@
+// mod redis_protocol;
+
 #[allow(unused_imports)]
 use std::env;
 #[allow(unused_imports)]
 use std::fs;
-use std::net::TcpListener;
+use std::net::SocketAddr;
+use std::str;
+use tokio::io;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
-fn main() {
+#[tokio::main]
+async fn main() -> io::Result<()> {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
 
-    let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
+    let mut listener = TcpListener::bind("127.0.0.1:6379").await?;
 
-    match listener.accept() {
-        Ok((_socket, addr)) => println!("accepted new client: {:?}", addr),
-        Err(e) => println!("couldn't accept client: {:?}", e),
+    loop {
+        match listener.accept().await {
+            Ok((socket, addr)) => {
+                tokio::spawn(async move {
+                    handle_socket(socket, addr).await;
+                });
+            }
+            Err(err) => println!("error accepting client: {:?}", err),
+        }
     }
+}
+
+async fn handle_socket(mut socket: TcpStream, addr: SocketAddr) {
+    println!("accepted client: {:?}", addr);
+    let mut buffer = [0; 1024];
+    let t = "+PONG\r\n".as_bytes();
+
+    loop {
+        println!("Reading data");
+        match socket.read(&mut buffer[..]).await {
+            Err(_) | Ok(0) => break,
+            Ok(n) => {
+                let s = str::from_utf8(&buffer[..n]).expect("couldn't convert as utf8");
+
+                println!("Received {}", s);
+
+                let _ = socket.write(t).await;
+            }
+        }
+    }
+
+    println!("socket closed {:?}", socket);
 }
