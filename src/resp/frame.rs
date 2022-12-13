@@ -174,22 +174,20 @@ impl RespFrame {
                 let v = Vec::new();
                 let mut arr_iter = arr.iter();
 
-                // check if ping command
-                if let Some(value) = arr_iter.next() {
-                    if value.eq(&RespFrame::Bulk("PING".to_string())) {
+                if let Some(RespFrame::Bulk(command)) = arr_iter.next() {
+                    if command.eq("PING") {
                         return RespFrame::Simple("PONG".to_string());
                     }
-
-                    if value.eq(&RespFrame::Bulk("ECHO".to_string())) {
+                    if command.eq("ECHO") {
                         return match arr_iter.next() {
                             // warn: should check if is bulk string
                             Some(echo) => echo.clone(),
                             None => RespFrame::Error("Invalid Echo Command".to_string()),
                         };
                     }
-                }
 
-                // check if echo command
+                    return RespFrame::Error(format!("UNRECOGNIZED COMMAND: '{}'", command));
+                }
 
                 RespFrame::from(v)
             }
