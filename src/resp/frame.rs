@@ -175,10 +175,13 @@ impl RespFrame {
                 let mut arr_iter = arr.iter();
 
                 if let Some(RespFrame::Bulk(command)) = arr_iter.next() {
-                    if command.eq("PING") {
+                    let cmd_lower = command.to_ascii_lowercase();
+
+                    if cmd_lower.eq("ping") {
                         return RespFrame::Simple("PONG".to_string());
                     }
-                    if command.eq("ECHO") {
+
+                    if cmd_lower.eq("echo") {
                         return match arr_iter.next() {
                             // warn: should check if is bulk string
                             Some(echo) => echo.clone(),
