@@ -19,7 +19,7 @@ edition = "2018"
 #
 # DON'T EDIT THIS!
 [dependencies]
-bytes = "0.5" # helps manage buffers
+bytes = "0.5"                                            # helps manage buffers
 memchr = "2.5.0"
-tokio = { version = "0.2", features = ["full"] } # async networking
+tokio = { version = "0.2", features = ["full"] }         # async networking
 tokio-util = { version = "0.2.0", features = ["codec"] }

@@ -1,16 +1,21 @@
-mod redis_protocol;
-// mod types;
+mod resp;
 
-use crate::redis_protocol::process_command;
+use resp::frame::RespFrame;
+
+use std::convert::TryFrom;
 #[allow(unused_imports)]
 use std::env;
 #[allow(unused_imports)]
 use std::fs;
 use std::net::SocketAddr;
-use std::str;
 use tokio::io;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
+// use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::stream::StreamExt;
+use tokio_util::codec::BytesCodec;
+// use tokio_util::codec::Decoder;
+use tokio_util::codec::Framed;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -31,24 +36,39 @@ async fn main() -> io::Result<()> {
     }
 }
 
-async fn handle_socket(mut socket: TcpStream, addr: SocketAddr) {
+async fn handle_socket(socket: TcpStream, addr: SocketAddr) {
     println!("accepted client: {:?}", addr);
-    let mut buffer = [0; 1024];
-    let t = "+PONG\r\n".as_bytes();
+    let mut _buffer = [0; 1024];
+    // let pong = "+PONG\r\n".as_bytes();
 
-    loop {
-        println!("Reading data");
-        match socket.read(&mut buffer[..]).await {
-            Err(_) | Ok(0) => break,
-            Ok(n) => {
-                let s = str::from_utf8(&buffer[..n]).expect("couldn't convert as utf8");
+    // let mut transport = RespParser::default().framed(socket);
+    let mut transport = Framed::new(socket, BytesCodec::new());
 
-                let ans = process_command(s).as_bytes();
+    // 'ev_loop: loop {
+    while let Some(msg) = transport.next().await {
+        match msg {
+            Err(e) => eprintln!("Error receiving msg: {:?}", e),
+            Ok(b) => {
+                let bytes_to_send = match RespFrame::try_from(b) {
+                    Err(e) => {
+                        eprintln!("{:?}", e);
+                        RespFrame::Null.to_bytes()
+                    }
+                    Ok(frame) => {
+                        println!("{:?}", frame);
 
-                let _ = socket.write(ans).await;
+                        frame.process_commands().to_bytes()
+                    }
+                };
+
+                let x = transport.get_mut();
+                if let Err(e) = x.write_all(&bytes_to_send).await {
+                    println!("Error sending pong response to {}: {:?}", addr, e);
+                };
             }
         }
     }
+    // }
 
-    println!("socket closed {:?}", socket);
+    println!("Client closed {:?}", addr);
 }
