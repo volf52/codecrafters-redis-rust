@@ -2,9 +2,11 @@ use std::{convert::TryFrom, fmt::Write};
 
 use crate::resp::error::RespError;
 use bytes::{Bytes, BytesMut};
+use tokio::sync::{broadcast, mpsc};
 
 use super::constants::{starting_byte, starting_char, NULL_STR, NULL_STR_BYTES};
 use super::{buffer::RespBuffer, error::RespResult};
+use crate::store::{StoreCommand, StoreResponse};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum RespFrame {
@@ -168,31 +170,82 @@ impl RespFrame {
         b.freeze()
     }
 
-    pub fn process_commands(&self) -> Self {
+    pub async fn process_commands(
+        &self,
+        store_sender: &mut mpsc::Sender<StoreCommand>,
+        store_receiver: &mut broadcast::Receiver<StoreResponse>,
+    ) -> Self {
         match self {
             Self::Array(arr) => {
                 let v = Vec::new();
                 let mut arr_iter = arr.iter();
 
-                if let Some(RespFrame::Bulk(command)) = arr_iter.next() {
+                if let Some(Self::Bulk(command)) = arr_iter.next() {
                     let cmd_lower = command.to_ascii_lowercase();
 
+                    // process ping command
                     if cmd_lower.eq("ping") {
-                        return RespFrame::Simple("PONG".to_string());
+                        return Self::Simple("PONG".to_string());
                     }
 
+                    // process echo command
                     if cmd_lower.eq("echo") {
                         return match arr_iter.next() {
                             // warn: should check if is bulk string
                             Some(echo) => echo.clone(),
-                            None => RespFrame::Error("Invalid Echo Command".to_string()),
+                            None => Self::Error("Invalid Echo Command".to_string()),
                         };
                     }
 
-                    return RespFrame::Error(format!("UNRECOGNIZED COMMAND: '{}'", command));
+                    // process get command
+                    if cmd_lower.eq("get") {
+                        return match arr_iter.next() {
+                            Some(Self::Bulk(key)) => {
+                                // check if present in store
+                                let get_cmd = StoreCommand::get_value(key.clone());
+                                let _res = store_sender.send(get_cmd).await;
+
+                                match store_receiver.recv().await {
+                                    Ok(StoreResponse::Value(v)) => Self::Bulk(v),
+                                    Ok(StoreResponse::Nil) => Self::Null,
+                                    Err(e) => Self::Error(e.to_string()),
+                                    _ => unreachable!(),
+                                }
+                            }
+                            _ => Self::Error(
+                                "Invalid GET command: must send bulk string after this".to_string(),
+                            ),
+                        };
+                    }
+
+                    // process set command
+                    if cmd_lower.eq("set") {
+                        let key = arr_iter.next();
+                        let val = arr_iter.next();
+
+                        return match (key, val) {
+                            (Some(Self::Bulk(key)), Some(Self::Bulk(val))) => {
+                                let set_cmd = StoreCommand::set_value(key.clone(), val.clone());
+
+                                let _res = store_sender.send(set_cmd).await;
+
+                                match store_receiver.recv().await {
+                                    Ok(StoreResponse::Ok) => Self::Simple("OK".to_string()),
+                                    Err(e) => Self::Error(e.to_string()),
+                                    Ok(_) => unreachable!(),
+                                }
+                            }
+                            _ => Self::Error(
+                                "Invalid SET command: must send two bulk strings afterwards"
+                                    .to_string(),
+                            ),
+                        };
+                    }
+
+                    return Self::Error(format!("UNRECOGNIZED COMMAND: '{}'", command));
                 }
 
-                RespFrame::from(v)
+                Self::from(v)
             }
             _ => Self::Error("Only commands should be sent".to_string()),
         }
