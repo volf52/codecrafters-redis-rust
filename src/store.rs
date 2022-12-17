@@ -5,10 +5,18 @@ use tokio::{
     sync::{broadcast, mpsc},
 };
 
+use crate::expiring_cache::ExpiringValue;
+
 #[derive(Debug)]
 pub enum StoreCommand {
-    Get { key: String },
-    Set { key: String, value: String },
+    Get {
+        key: String,
+    },
+    Set {
+        key: String,
+        value: String,
+        expiry: Option<std::time::Duration>,
+    },
 }
 
 impl StoreCommand {
@@ -16,25 +24,31 @@ impl StoreCommand {
         Self::Get { key }
     }
 
-    pub fn set_value(key: String, value: String) -> Self {
-        Self::Set { key, value }
+    pub fn set_value(key: String, value: String, expiry: Option<std::time::Duration>) -> Self {
+        Self::Set { key, value, expiry }
     }
 }
 
 // could use option as well
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StoreResponse {
     Value(String),
     Nil,
     Ok,
 }
 
-#[derive(Debug, Default)]
-pub struct KVStore(HashMap<String, String>);
+#[derive(Debug)]
+pub struct KVStore(HashMap<String, ExpiringValue<String>>);
+
+impl Default for KVStore {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
 
 impl KVStore {
     pub fn new() -> Self {
-        KVStore::default()
+        Self(HashMap::new())
     }
 
     pub async fn run_loop(
@@ -46,14 +60,25 @@ impl KVStore {
             println!("Received command: {:?}", cmd);
 
             let resp = match cmd {
-                StoreCommand::Get { key } => self
-                    .0
-                    .get(&key)
-                    .map(|v| StoreResponse::Value(v.clone()))
-                    .unwrap_or(StoreResponse::Nil),
-                StoreCommand::Set { key, value } => {
-                    let entry = self.0.entry(key).or_insert_with(|| value.clone());
-                    *entry = value;
+                StoreCommand::Get { key } => {
+                    let val = self.0.get(&key);
+
+                    if let Some(v) = val {
+                        if v.has_expired() {
+                            println!("Removing expired value for key <{}>", key);
+                            self.0.remove(&key);
+                            StoreResponse::Nil
+                        } else {
+                            StoreResponse::Value(v.value.clone())
+                        }
+                    } else {
+                        StoreResponse::Nil
+                    }
+                }
+                StoreCommand::Set { key, value, expiry } => {
+                    let val = ExpiringValue::new(value, expiry);
+
+                    self.0.insert(key, val);
 
                     StoreResponse::Ok
                 }

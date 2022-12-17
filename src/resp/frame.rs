@@ -222,10 +222,27 @@ impl RespFrame {
                     if cmd_lower.eq("set") {
                         let key = arr_iter.next();
                         let val = arr_iter.next();
+                        let PX = "PX".to_string();
 
-                        return match (key, val) {
-                            (Some(Self::Bulk(key)), Some(Self::Bulk(val))) => {
-                                let set_cmd = StoreCommand::set_value(key.clone(), val.clone());
+                        let expires_in = match arr_iter.next() {
+                            None => Ok(None),
+                            Some(RespFrame::Bulk(PX)) =>
+                                match arr_iter.next() {
+                                    Some(RespFrame::Bulk(i)) => match i.parse::<u64>() {
+                                        Ok(v) => Ok(Some(v)),
+                                        Err(_) => Err(format!("Error parsing PX value: {}", i))
+                                    },
+                                    _ => Err("must supply expires_in value after PX".to_string()),
+                                }
+                            ,
+                            _ => Err("Malformed command: Only PX can be optionally sent after SET <key> <value>".to_string())
+                        };
+
+                        return match (key, val, expires_in) {
+                            (Some(Self::Bulk(k)), Some(Self::Bulk(v)), Ok(exp)) => {
+                                let exp_duration = exp.map(std::time::Duration::from_millis);
+                                let set_cmd =
+                                    StoreCommand::set_value(k.clone(), v.clone(), exp_duration);
 
                                 let _res = store_sender.send(set_cmd).await;
 
@@ -235,6 +252,7 @@ impl RespFrame {
                                     Ok(_) => unreachable!(),
                                 }
                             }
+                            (_, _, Err(e)) => Self::Error(e),
                             _ => Self::Error(
                                 "Invalid SET command: must send two bulk strings afterwards"
                                     .to_string(),
